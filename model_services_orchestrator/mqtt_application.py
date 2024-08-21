@@ -16,14 +16,18 @@ import asyncio
 import typing
 
 from asyncio_mqtt import Client, MqttError
-
 from model_services_orchestrator.async_application import AsyncApplication
 from model_services_orchestrator.k8s_api import K8sApi
 from model_services_orchestrator.log import LOGGER
-from model_services_orchestrator.messages import (DeployModels, ModelConfiguration, ModelsReady, TerminationStatus,
-                                                  ModelHasTerminated, AllModelsHaveTerminated)
-from model_services_orchestrator.model_inventory import ModelInventory, Model, ModelState
-from model_services_orchestrator.types import SimulationId, ModelId
+from model_services_orchestrator.messages import (AllModelsHaveTerminated,
+                                                  DeployModels,
+                                                  ModelConfiguration,
+                                                  ModelHasTerminated,
+                                                  ModelsReady,
+                                                  TerminationStatus)
+from model_services_orchestrator.model_inventory import (Model, ModelInventory,
+                                                         ModelState)
+from model_services_orchestrator.types import ModelId, SimulationId
 
 
 class MQTTApplication(AsyncApplication):  # pylint: disable=too-many-instance-attributes

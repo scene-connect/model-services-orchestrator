@@ -1,4 +1,6 @@
 kubernetes==19.*
 protobuf==3.*
 asyncio-mqtt==0.*
-python-dotenv==0.*
+paho-mqtt==1.*
+pydantic==2.*
+pydantic-settings==2.*

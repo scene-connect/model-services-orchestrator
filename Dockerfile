@@ -8,4 +8,4 @@ RUN pip install -r requirements.txt
 
 COPY model_services_orchestrator/ ./model_services_orchestrator/
 
-ENTRYPOINT python3 -u -m model_services_orchestrator.main
+ENTRYPOINT ["python3","-u","-m","model_services_orchestrator.main"]

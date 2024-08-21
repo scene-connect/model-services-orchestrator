@@ -13,16 +13,16 @@
 #      TNO
 
 import asyncio
-from datetime import datetime, timedelta
 import functools
 import typing
+from datetime import datetime, timedelta
 
 import kubernetes.client
-
 from model_services_orchestrator.constants import SIMULATION_NAMESPACE
-from model_services_orchestrator.model_inventory import Model
 from model_services_orchestrator.log import LOGGER
-from model_services_orchestrator.types import SimulatorId, SimulationId, ModelId, ModelState
+from model_services_orchestrator.model_inventory import Model
+from model_services_orchestrator.types import (ModelId, ModelState,
+                                               SimulationId, SimulatorId)
 
 
 class PodStatus:
@@ -54,24 +54,79 @@ class K8sApi:
     loop: asyncio.AbstractEventLoop
     pull_image_secret_name: str
 
-    def __init__(self,
-                 kubernetes_client: kubernetes.client.ApiClient,
-                 loop: asyncio.AbstractEventLoop,
-                 pull_image_secret_name: str):
+    def __init__( #pylint: disable=too-many-arguments
+
+            self,
+            kubernetes_client: kubernetes.client.ApiClient,
+            loop: asyncio.AbstractEventLoop,
+            pull_image_secret_name: str,
+            additional_env: typing.Optional[dict[str,str]] = None,
+            secret_env: typing.Optional[dict[str,tuple[str, str]]] = None,
+            secret_mounts: typing.Optional[dict[str,str]] = None,
+            ):
         self.k8s_core_api = kubernetes.client.CoreV1Api(kubernetes_client)
         self.k8s_apps_api = kubernetes.client.AppsV1Api(kubernetes_client)
         self.loop = loop
         self.pull_image_secret_name = pull_image_secret_name
+        self.additional_env = additional_env
+        self.secret_mounts = secret_mounts
+        self.secret_env = secret_env
 
-    async def deploy_model(self, simulator_id: SimulatorId, simulation_id: SimulationId, model: Model,
-                           keep_logs_hours: float) -> bool:
+    def get_container_args_volumes(
+            self,
+            pod_name: str,
+            model: Model,
+        ) -> tuple[
+            dict[str,typing.Any], typing.Optional[list[kubernetes.client.V1Volume]]
+        ]:
+        env_vars: list[kubernetes.client.V1EnvVar] = []
+        container_args = {
+                "image": model.container_url,
+                "env": env_vars,
+                "name": pod_name,
+                "image_pull_policy": 'Always'
+        }
+        for name, value in model.env_vars.items():
+            env_vars.append(kubernetes.client.V1EnvVar(name, value))
+
+        if self.additional_env is not None:
+            for k,v in self.additional_env.items():
+                env_vars.append(kubernetes.client.V1EnvVar(k, v))
+
+        if self.secret_env is not None:
+            for var, (secret, field)  in self.secret_env.items():
+                env_vars.append(kubernetes.client.V1EnvVar(
+                    var, value_from=kubernetes.client.V1EnvVarSource(
+                        secret_key_ref=secret,field_ref=field)))
+
+
+
+        volumes: typing.Optional[list[kubernetes.client.V1Volume]] = None
+
+        if self.secret_mounts is not None:
+            volumes = []
+            volume_mounts: list[kubernetes.client.V1VolumeMount] = []
+            for k, v in self.secret_mounts.items():
+                volume_mounts.append(
+                    kubernetes.client.V1VolumeMount(mount_path=v, name=k, read_only=True)
+                )
+                volumes.append(
+                    kubernetes.client.V1Volume(name=k, secret=kubernetes.client.V1SecretVolumeSource(secret_name=k))
+                )
+            container_args["volume_mounts"] = volume_mounts
+        return container_args, volumes
+
+    async def deploy_model(
+            self,
+            simulator_id: SimulatorId,
+            simulation_id: SimulationId,
+            model: Model,
+            keep_logs_hours: float,
+            ) -> bool:
         pod_name = self.model_to_pod_name(simulator_id, simulation_id, model.model_id)
         LOGGER.info(f'Deploying pod {pod_name}')
-        k8s_container = kubernetes.client.V1Container(image=model.container_url,
-                                                      env=[kubernetes.client.V1EnvVar(name, value)
-                                                           for name, value in model.env_vars.items()],
-                                                      name=pod_name,
-                                                      image_pull_policy='Always')
+        container_args, volumes = self.get_container_args_volumes(pod_name, model)
+        k8s_container = kubernetes.client.V1Container(**container_args)
         if self.pull_image_secret_name:
             LOGGER.debug(f'Using pull image secret name {self.pull_image_secret_name}')
             image_pull_secrets = [kubernetes.client.V1LocalObjectReference(name=self.pull_image_secret_name)]
@@ -83,7 +138,8 @@ class K8sApi:
                                                    node_selector={
                                                        'type': 'worker'
                                                    },
-                                                   image_pull_secrets=image_pull_secrets)
+                                                   image_pull_secrets=image_pull_secrets,
+                                                   volumes=volumes)
 
         k8s_pod_metadata = kubernetes.client.V1ObjectMeta(name=pod_name,
                                                           labels={
